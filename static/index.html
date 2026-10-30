@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meeting Notes</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 700px; margin: 20px auto; padding: 0 10px; background: #f4f7fb; color: #222; }
+    h1 { color: #1e4d8c; }
+    h3 { color: #1e4d8c; border-bottom: 2px solid #1e4d8c; padding-bottom: 4px; margin-top: 30px; }
+    input, textarea, select { border: 1px solid #aab; padding: 4px; max-width: 100%; }
+    button { cursor: pointer; background: #1e4d8c; color: white; border: none; padding: 5px 12px; border-radius: 3px; margin: 2px; }
+    button:hover { background: #2f6bbd; }
+    button.red { background: #c0262d; }
+    ul { background: white; padding: 10px 10px 10px 30px; border-radius: 4px; }
+    li { margin-bottom: 10px; }
+    .box { background: white; padding: 10px; border-radius: 4px; }
+    .open { color: #b36b00; font-weight: bold; }
+    .closed { color: #1a8a3a; font-weight: bold; }
+    .small { color: #666; font-size: 12px; }
+    #msg { color: #c0262d; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Meeting Notes</h1>
+  <p>Simple app to write down meetings, track action items and catch up on what you missed.</p>
+  <p id="msg"></p>
+
+  <h3>Add Meeting</h3>
+  Title: <input id="title"><br><br>
+  Date: <input id="mdate" type="date"><br><br>
+  Participants: <input id="people" placeholder="Ravi, Neha"><br><br>
+  Agenda:<br>
+  <textarea id="agenda" rows="2" cols="50"></textarea><br><br>
+  Notes:<br>
+  <textarea id="notes" rows="5" cols="50"></textarea><br><br>
+  Decisions (one per line):<br>
+  <textarea id="decisions" rows="3" cols="50"></textarea><br><br>
+  <button onclick="addMeeting()">Add Meeting</button>
+
+  <h3>Meetings</h3>
+  <ul id="list"></ul>
+
+  <h3>Add Action Item</h3>
+  Meeting: <select id="actMeeting"></select><br><br>
+  Task: <input id="task"><br><br>
+  Owner: <input id="owner"><br><br>
+  Due date: <input id="due" type="date"><br><br>
+  <button onclick="addAction()">Add Action Item</button>
+
+  <h3>Action Items</h3>
+  <ul id="actions"></ul>
+
+  <h3>Carry Forward Open Items</h3>
+  From: <select id="fromMeeting"></select>
+  To: <select id="toMeeting"></select>
+  <button onclick="carryForward()">Carry Forward</button>
+
+  <h3>Catch-up Brief</h3>
+  <p class="small">For someone who missed a meeting or is taking over.</p>
+  Meeting: <select id="briefMeeting"></select>
+  <button onclick="makeBrief()">Make Brief</button>
+  <div id="brief" class="box"></div>
+
+  <h3>Knowledge Base</h3>
+  Document title: <input id="docTitle"><br><br>
+  Content:<br>
+  <textarea id="docText" rows="3" cols="50"></textarea><br><br>
+  <button onclick="addDoc()">Add Document</button>
+  <ul id="docs"></ul>
+
+  <h3>Activity Log</h3>
+  <ul id="log" class="small"></ul>
+
+  <script>
+    var meetings = [];
+    var actions = [];
+    var docs = [];
+    var events = [];
+
+    // Calls the server. Returns the JSON, or null if there was an error (shown on the page).
+    async function api(method, url, body) {
+      try {
+        var res = await fetch(url, {
+          method: method,
+          headers: { "Content-Type": "application/json" },
+          body: body ? JSON.stringify(body) : undefined
+        });
+        var data = await res.json();
+        if (!res.ok) {
+          msg(data.error || "Something went wrong");
+          return null;
+        }
+        msg("");
+        return data;
+      } catch (e) {
+        msg("Could not reach the server");
+        return null;
+      }
+    }
+
+    function msg(text) {
+      document.getElementById("msg").innerText = text;
+    }
+
+    function val(id) {
+      return document.getElementById(id).value.trim();
+    }
+
+    function clear(ids) {
+      for (var i = 0; i < ids.length; i++) document.getElementById(ids[i]).value = "";
+    }
+
+    function findMeeting(id) {
+      for (var i = 0; i < meetings.length; i++) {
+        if (meetings[i].id == id) return meetings[i];
+      }
+      return null;
+    }
+
+    async function load() {
+      var data = await api("GET", "/api/data");
+      if (!data) return;
+      meetings = data.meetings;
+      actions = data.actions;
+      docs = data.docs;
+      events = data.events;
+      render();
+    }
+
+    // ---------- Meetings ----------
+
+    async function addMeeting() {
+      var res = await api("POST", "/api/meetings", {
+        title: val("title"), date: val("mdate"), people: val("people"),
+        agenda: val("agenda"), notes: val("notes"), decisions: val("decisions")
+      });
+      if (!res) return;
+      clear(["title", "mdate", "people", "agenda", "notes", "decisions"]);
+      load();
+    }
+
+    async function deleteMeeting(id) {
+      if (!confirm("Delete this meeting and its action items?")) return;
+      await api("DELETE", "/api/meetings/" + id);
+      load();
+    }
+
+    async function linkDocs(id) {
+      await api("POST", "/api/meetings/" + id + "/link");
+      load();
+    }
+
+    function showMeetings() {
+      var list = document.getElementById("list");
+      list.innerHTML = "";
+      if (meetings.length == 0) list.innerHTML = "<li>No meetings yet</li>";
+      for (var i = 0; i < meetings.length; i++) {
+        var m = meetings[i];
+        var html = "<li><b>" + m.title + "</b> <span class='small'>" + (m.date || "no date") + "</span><br>";
+        html += "Participants: " + (m.people || "-") + "<br>";
+        if (m.agenda) html += "Agenda: " + m.agenda + "<br>";
+        if (m.notes) html += "Notes: " + m.notes + "<br>";
+        if (m.decisions.length > 0) html += "Decisions: " + m.decisions.join("; ") + "<br>";
+        if (m.links) html += "Related docs: " + (m.links.length ? m.links.join(", ") : "none found") + "<br>";
+        html += "<button onclick='linkDocs(" + m.id + ")'>Link docs</button>";
+        html += "<button class='red' onclick='deleteMeeting(" + m.id + ")'>Delete</button></li>";
+        list.innerHTML += html;
+      }
+    }
+
+    // ---------- Action items ----------
+
+    async function addAction() {
+      var res = await api("POST", "/api/actions", {
+        meeting_id: Number(val("actMeeting")), task: val("task"), owner: val("owner"), due: val("due")
+      });
+      if (!res) return;
+      clear(["task", "owner", "due"]);
+      load();
+    }
+
+    async function closeAction(id) {
+      var outcome = prompt("What was the outcome?");
+      if (outcome == null) return;
+      await api("POST", "/api/actions/" + id + "/close", { outcome: outcome });
+      load();
+    }
+
+    async function reassign(id) {
+      var owner = prompt("New owner?");
+      if (owner == null) return;
+      await api("POST", "/api/actions/" + id + "/reassign", { owner: owner });
+      load();
+    }
+
+    function showActions() {
+      var list = document.getElementById("actions");
+      list.innerHTML = "";
+      if (actions.length == 0) list.innerHTML = "<li>No action items yet</li>";
+      var today = new Date().toISOString().slice(0, 10);
+      for (var i = 0; i < actions.length; i++) {
+        var a = actions[i];
+        var m = findMeeting(a.meeting_id);
+        var late = a.status == "open" && a.due && a.due < today ? " <span style='color:#c0262d'>(overdue)</span>" : "";
+        var html = "<li><b>" + a.task + "</b> - " + a.owner + " - due " + (a.due || "-") + late +
+          " - <span class='" + a.status + "'>" + a.status + "</span><br>";
+        html += "<span class='small'>Meeting: " + (m ? m.title : "-") + "</span><br>";
+        if (a.outcome) html += "Outcome: " + a.outcome + "<br>";
+        html += "<span class='small'>History: " + a.history.join(" → ") + "</span><br>";
+        if (a.status == "open") {
+          html += "<button onclick='closeAction(" + a.id + ")'>Close</button>";
+          html += "<button onclick='reassign(" + a.id + ")'>Reassign</button>";
+        }
+        list.innerHTML += html + "</li>";
+      }
+    }
+
+    async function carryForward() {
+      var res = await api("POST", "/api/carry-forward", {
+        from: Number(val("fromMeeting")), to: Number(val("toMeeting"))
+      });
+      if (!res) return;
+      alert(res.moved + " open item(s) carried forward");
+      load();
+    }
+
+    // ---------- Catch-up brief ----------
+
+    async function makeBrief() {
+      if (meetings.length == 0) { msg("No meetings yet"); return; }
+      var b = await api("GET", "/api/meetings/" + val("briefMeeting") + "/brief");
+      if (!b) return;
+      var html = "<b>" + b.title + "</b> (" + (b.date || "no date") + ")<br>";
+      html += "Who was there: " + (b.people || "-") + "<br>";
+      html += "Summary: " + b.summary + "<br>";
+      html += "Decisions: " + (b.decisions.length ? b.decisions.join("; ") : "none") + "<br>";
+      html += "Open items: ";
+      if (b.open_items.length == 0) html += "none";
+      for (var i = 0; i < b.open_items.length; i++) {
+        var o = b.open_items[i];
+        html += "<br>- " + o.task + " (" + o.owner + ", due " + (o.due || "-") + ")";
+      }
+      document.getElementById("brief").innerHTML = html;
+      load();
+    }
+
+    // ---------- Knowledge base ----------
+
+    async function addDoc() {
+      var res = await api("POST", "/api/docs", { title: val("docTitle"), text: val("docText") });
+      if (!res) return;
+      clear(["docTitle", "docText"]);
+      load();
+    }
+
+    function showDocs() {
+      var list = document.getElementById("docs");
+      list.innerHTML = "";
+      if (docs.length == 0) list.innerHTML = "<li>No documents yet</li>";
+      for (var i = 0; i < docs.length; i++) {
+        list.innerHTML += "<li><b>" + docs[i].title + "</b><br><span class='small'>" + docs[i].text + "</span></li>";
+      }
+    }
+
+    // ---------- Other ----------
+
+    function fillSelects() {
+      var ids = ["actMeeting", "fromMeeting", "toMeeting", "briefMeeting"];
+      for (var i = 0; i < ids.length; i++) {
+        var sel = document.getElementById(ids[i]);
+        var old = sel.value;
+        sel.innerHTML = "";
+        for (var j = 0; j < meetings.length; j++) {
+          sel.innerHTML += "<option value='" + meetings[j].id + "'>" + meetings[j].title + "</option>";
+        }
+        if (old) sel.value = old;
+        if (sel.selectedIndex == -1 && meetings.length > 0) sel.selectedIndex = 0;
+      }
+      if (meetings.length > 1 && !document.getElementById("toMeeting").value) {
+        document.getElementById("toMeeting").selectedIndex = meetings.length - 1;
+      }
+    }
+
+    function showLog() {
+      var list = document.getElementById("log");
+      list.innerHTML = "";
+      if (events.length == 0) list.innerHTML = "<li>Nothing yet</li>";
+      for (var i = 0; i < events.length; i++) {
+        list.innerHTML += "<li>" + events[i].time + " [" + events[i].level + "] " + events[i].message + "</li>";
+      }
+    }
+
+    function render() {
+      showMeetings();
+      showActions();
+      showDocs();
+      fillSelects();
+      showLog();
+    }
+
+    load();
+  </script>
+</body>
+</html>
